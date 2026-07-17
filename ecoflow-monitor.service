@@ -1,0 +1,17 @@
+[Unit]
+Description=EcoFlow power monitor -> Telegram (The Farm Internet)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User and paths to match the VPS deployment.
+User=ecoflow
+WorkingDirectory=/opt/ecoflow-monitoring
+EnvironmentFile=/opt/ecoflow-monitoring/.env
+ExecStart=/opt/ecoflow-monitoring/.venv/bin/python /opt/ecoflow-monitoring/ecoflow_monitor.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
