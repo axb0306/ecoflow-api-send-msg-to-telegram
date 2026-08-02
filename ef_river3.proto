@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+message River3Header {
+    optional bytes  pdata = 1;
+    optional int32  src = 2;
+    optional int32  dest = 3;
+    optional int32  d_src = 4;
+    optional int32  d_dest = 5;
+    optional int32  enc_type = 6;
+    optional int32  check_type = 7;
+    optional int32  cmd_func = 8;
+    optional int32  cmd_id = 9;
+    optional int32  data_len = 10;
+    optional int32  need_ack = 11;
+    optional int32  is_ack = 12;
+    optional int32  seq = 14;
+    optional int32  product_id = 15;
+    optional int32  version = 16;
+    optional int32  payload_ver = 17;
+    optional int32  time_snap = 18;
+    optional int32  is_rw_cmd = 19;
+    optional int32  is_queue = 20;
+    optional int32  ack_type = 21;
+    optional string code = 22;
+    optional string from = 23;
+    optional string module_sn = 24;
+    optional string device_sn = 25;
+}
+
+message River3HeaderMessage {
+    repeated River3Header header = 1;
+}
+
+message River3DisplayPropertyUpload {
+    optional uint32 errcode = 1;
+    optional float  pow_in_sum_w = 3;
+    optional float  pow_out_sum_w = 4;
+    optional float  pow_get_qcusb1 = 9;
+    optional float  pow_get_qcusb2 = 10;
+    optional float  pow_get_typec1 = 11;
+    optional float  pow_get_typec2 = 12;
+    optional float  pow_get_12v = 37;
+    optional float  pow_get_ac = 53;
+    optional float  pow_get_ac_in = 54;
+    optional uint32 plug_in_info_ac_in_flag = 61;
+    optional float  bms_batt_soc = 242;
+    optional float  bms_batt_soh = 243;
+    optional uint32 bms_dsg_rem_time = 254;
+    optional uint32 bms_chg_rem_time = 255;
+    optional int32  bms_min_cell_temp = 258;
+    optional int32  bms_max_cell_temp = 259;
+    optional float  cms_batt_soc = 262;
+    optional float  cms_batt_soh = 263;
+    optional uint32 cms_dsg_rem_time = 268;
+    optional uint32 cms_chg_rem_time = 269;
+    optional uint32 bms_chg_dsg_state = 281;
+    optional uint32 cms_chg_dsg_state = 282;
+    optional float  pow_get_pv = 361;
+    optional float  pow_get_ac_out = 368;
+}
+
+message River3RuntimePropertyUpload {
+    optional float  bms_batt_vol = 244;
+    optional uint32 bms_full_cap = 247;
+    optional uint32 bms_remain_cap = 249;
+}
+
+// CMS Heartbeat - cmdFunc=32, cmdId=2 (innehaller batteri-SOC tillforlitligt)
+message River3CMSHeartBeatReport {
+    optional River3CMSStatus1 msg32_2_1 = 1;
+}
+
+message River3CMSStatus1 {
+    optional sint32 cms_batt_vol_mv = 4;
+    optional uint32 cms_chg_req_amp = 5;
+    optional uint32 cms_max_chg_soc = 7;
+    optional uint32 cms_min_dsg_soc = 8;
+    optional uint32 cms_chg_rem_time = 12;
+    optional uint32 cms_dsg_rem_time = 13;
+    optional sint32 cms_chg_dsg_state = 14;
+    optional float  cms_batt_soc = 15;
+}

@@ -1,0 +1,16 @@
+[Unit]
+Description=EcoFlow River 3 -> JSON bridge + Telegram alerts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rpi
+WorkingDirectory=/home/rpi/ecoflow_monitoring
+EnvironmentFile=/home/rpi/ecoflow_monitoring/.env
+ExecStart=/usr/bin/python3 /home/rpi/ecoflow_monitoring/ecoflow_bridge.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
