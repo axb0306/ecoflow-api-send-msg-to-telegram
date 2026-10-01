@@ -1,0 +1,16 @@
+[Unit]
+Description=EcoFlow River 3 Telegram alerts (VPS, status endpoint on localhost only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vncuser
+WorkingDirectory=/home/vncuser/ecoflow_monitoring
+EnvironmentFile=/home/vncuser/ecoflow_monitoring/.env
+ExecStart=/home/vncuser/ecoflow_monitoring/.venv/bin/python /home/vncuser/ecoflow_monitoring/ecoflow_bridge.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

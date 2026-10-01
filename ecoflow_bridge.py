@@ -21,7 +21,14 @@ Install on the Pi:
     pip3 install paho-mqtt protobuf python-dotenv --break-system-packages
 Keep ef_river3_pb2.py next to this file. For autostart see river-bridge.service.
 """
-import base64, json, os, ssl, sys, threading, time, random
+import base64
+import json
+import os
+import random
+import ssl
+import sys
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -46,10 +53,14 @@ EMAIL = _env("ECOFLOW_EMAIL", required=True)
 PASSWORD = _env("ECOFLOW_PASSWORD", required=True)
 SN = _env("ECOFLOW_DEVICE_SN", required=True)
 DOMAIN = _env("ECOFLOW_APP_DOMAIN", "api.ecoflow.com")
+HTTP_HOST = _env("HTTP_HOST", "0.0.0.0")
 HTTP_PORT = int(_env("HTTP_PORT", "8080"))
 
-TELEGRAM_TOKEN = _env("TELEGRAM_BOT_TOKEN", required=True)
-TELEGRAM_CHAT = _env("TELEGRAM_CHAT_ID", required=True)
+# TELEGRAM_ENABLED=0 -> status JSON only, no alerts (e.g. the Pi that feeds the
+# ESP32 while another host owns the alerts).
+TELEGRAM_ENABLED = _env("TELEGRAM_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+TELEGRAM_TOKEN = _env("TELEGRAM_BOT_TOKEN", required=TELEGRAM_ENABLED)
+TELEGRAM_CHAT = _env("TELEGRAM_CHAT_ID", required=TELEGRAM_ENABLED)
 DEVICE_NAME = _env("DEVICE_NAME", "OUR FARM")
 
 # A source change must hold this long before it is treated as real (anti-flicker).
@@ -73,8 +84,9 @@ try:
     import ef_river3_pb2 as pb  # pre-compiled; no grpcio-tools needed
 except ImportError:
     sys.exit("Missing ef_river3_pb2.py next to this script.")
-import urllib.request
 import urllib.parse
+import urllib.request
+
 import paho.mqtt.client as mqtt
 
 # --- Shared status (guarded by lock) ---
@@ -186,6 +198,9 @@ def apply_fields(d):
 
 # --- Telegram ---
 def send_telegram(text):
+    if not TELEGRAM_ENABLED:
+        return
+
     def _do():
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -341,18 +356,18 @@ def mqtt_loop():
     while True:
         cl = None
         try:
-            token, user_id, cert = login()
+            _token, user_id, cert = login()
             print("Logged in, connecting MQTT", cert["url"])
             data_topic  = f"/app/device/property/{SN}"
             get_topic   = f"/app/{user_id}/{SN}/thing/property/get"
             reply_topic = f"/app/{user_id}/{SN}/thing/property/get_reply"
 
-            def on_connect(cl, u, f, rc, props=None):
+            def on_connect(cl, u, f, rc, props=None, *, data_topic=data_topic, reply_topic=reply_topic):
                 print("MQTT connected rc =", rc)
                 cl.subscribe(data_topic)
                 cl.subscribe(reply_topic)
 
-            def on_message(cl, u, msg):
+            def on_message(cl, u, msg, *, reply_topic=reply_topic):
                 if msg.topic == reply_topic:
                     handle_get_reply(msg.payload)
                     return
@@ -370,11 +385,11 @@ def mqtt_loop():
             cl.connect(cert["url"], int(cert["port"]))
             cl.loop_start()
 
-            def poll():
+            def poll(client=cl, topic=get_topic):
                 """Ask for the latest status - keeps the flow alive without the app."""
                 req = json.dumps({"version": "1.1", "moduleType": 0,
                                   "operateType": "latestQuotas", "params": {}})
-                cl.publish(get_topic, req)
+                client.publish(topic, req)
 
             reconnect_now.clear()
             time.sleep(2)
@@ -439,8 +454,9 @@ def main():
                   "You'll be alerted on power outage or loss of contact.")
     threading.Thread(target=mqtt_loop, daemon=True).start()
     threading.Thread(target=watchdog_loop, daemon=True).start()
-    srv = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), Handler)
-    print(f"JSON status on http://0.0.0.0:{HTTP_PORT}/status")
+    srv = ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), Handler)
+    print(f"JSON status on http://{HTTP_HOST}:{HTTP_PORT}/status "
+          f"(Telegram {'on' if TELEGRAM_ENABLED else 'off'})")
     srv.serve_forever()
 
 

@@ -27,7 +27,7 @@ import os
 import random
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import requests
 
@@ -46,7 +46,7 @@ except ImportError:  # dotenv is optional; env vars may be provided by systemd
 def _env(name: str, default: str | None = None, required: bool = False) -> str | None:
     value = os.environ.get(name, default)
     if required and not value:
-        logging.error("Missing required environment variable: %s", name)
+        logging.getLogger("ecoflow_monitor").error("Missing required environment variable: %s", name)
         sys.exit(1)
     return value
 
