@@ -13,6 +13,9 @@ Telegram alerts:
   * data stall: the MQTT session goes quiet while the socket stays open.
     Without this, a silent stall looks identical to "all is well" and no
     outage alert can ever fire.
+  * farm internet down / restored (optional, FARM_WAN_HOST): ping of the
+    farm's public IP, with a control host so our own outage is not blamed
+    on the farm.
 
 Configuration comes from environment variables (see .env.example).
 
@@ -26,6 +29,7 @@ import json
 import os
 import random
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -74,6 +78,18 @@ STALL_RECONNECT_SEC = int(_env("STALL_RECONNECT_SEC", "300"))
 # No decoded message for this long -> Telegram alert. Deliberately longer than
 # STALL_RECONNECT_SEC so a stall that one reconnect fixes stays quiet.
 STALL_ALERT_SEC = int(_env("STALL_ALERT_SEC", "900"))
+
+# Farm internet check: ping FARM_WAN_HOST (the farm's public IP). Empty = off.
+# Only runs where Telegram is enabled, so run it on the VPS, not on the Pi
+# that sits behind the same power cuts.
+FARM_WAN_HOST = _env("FARM_WAN_HOST", "").strip()
+# Pinged too when the farm does not answer: if this fails as well the problem
+# is on our side (this host's network), not the farm's, so no alert is raised.
+WAN_CONTROL_HOST = _env("WAN_CONTROL_HOST", "1.1.1.1").strip()
+WAN_INTERVAL_SEC = int(_env("WAN_INTERVAL_SEC", "15"))
+# Consecutive failed checks before "down" / successful checks before "back".
+WAN_DOWN_AFTER = int(_env("WAN_DOWN_AFTER", "4"))
+WAN_UP_AFTER = int(_env("WAN_UP_AFTER", "2"))
 
 try:
     sys.stdout.reconfigure(line_buffering=True)  # so the log shows up live in journalctl
@@ -351,6 +367,68 @@ def watchdog_loop():
             print("Telegram: no data alert")
 
 
+def ping_ok(host):
+    """True if at least one of two ICMP echo requests is answered."""
+    try:
+        r = subprocess.run(["ping", "-c", "2", "-W", "2", host],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=15)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+# up = confirmed state; fails/oks = consecutive check counters; down_since = first failed check
+_wan = {"up": True, "fails": 0, "oks": 0, "down_since": None}
+
+
+def river_summary():
+    """One line about the River, to tell a power cut from an internet-only outage."""
+    with lock:
+        src, soc, online = state["source"], state["soc"], state["online"]
+    if not online:
+        return "River: no data (unknown power state)"
+    return f"River: {src}, battery {soc}%"
+
+
+def wan_loop():
+    """Alert when the farm's public IP stops answering ping, and when it is back."""
+    print(f"Farm internet monitor: pinging {WAN_CONTROL_HOST} as control every {WAN_INTERVAL_SEC}s")
+    while True:
+        time.sleep(WAN_INTERVAL_SEC)
+        now = time.time()
+        if ping_ok(FARM_WAN_HOST):
+            _wan["fails"] = 0
+            if _wan["up"]:
+                _wan["down_since"] = None   # discard a failure streak that never reached the threshold
+            _wan["oks"] += 1
+            if not _wan["up"] and _wan["oks"] >= WAN_UP_AFTER:
+                _wan["up"] = True
+                dur = fmt_duration(now - _wan["down_since"]) if _wan["down_since"] else "unknown"
+                _wan["down_since"] = None
+                send_telegram(f"{DEVICE_NAME}: INTERNET RESTORED\n"
+                              f"The farm answers ping again.\n"
+                              f"Time without internet: {dur}\n"
+                              f"{river_summary()}")
+                print("Telegram: farm internet restored")
+            continue
+        if not ping_ok(WAN_CONTROL_HOST):
+            # Our own connectivity is broken - say nothing about the farm.
+            print("Control host unreachable too - skipping WAN check")
+            continue
+        _wan["oks"] = 0
+        _wan["fails"] += 1
+        if _wan["fails"] == 1 and _wan["up"]:
+            _wan["down_since"] = now
+        if _wan["up"] and _wan["fails"] >= WAN_DOWN_AFTER:
+            _wan["up"] = False
+            send_telegram(f"{DEVICE_NAME}: INTERNET DOWN\n"
+                          f"The farm's public IP stopped answering ping "
+                          f"({fmt_duration(now - _wan['down_since'])} ago).\n"
+                          f"{river_summary()}")
+            print("Telegram: farm internet down")
+
+
 # --- MQTT loop with auto-reconnect + re-login + active polling ---
 def mqtt_loop():
     while True:
@@ -450,10 +528,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    wan_on = bool(FARM_WAN_HOST) and TELEGRAM_ENABLED
     send_telegram(f"{DEVICE_NAME}: monitoring started. "
-                  "You'll be alerted on power outage or loss of contact.")
+                  "You'll be alerted on power outage or loss of contact"
+                  + (" and on internet outage." if wan_on else "."))
     threading.Thread(target=mqtt_loop, daemon=True).start()
     threading.Thread(target=watchdog_loop, daemon=True).start()
+    if wan_on:
+        threading.Thread(target=wan_loop, daemon=True).start()
     srv = ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), Handler)
     print(f"JSON status on http://{HTTP_HOST}:{HTTP_PORT}/status "
           f"(Telegram {'on' if TELEGRAM_ENABLED else 'off'})")
