@@ -79,6 +79,9 @@ STALL_RECONNECT_SEC = int(_env("STALL_RECONNECT_SEC", "300"))
 # STALL_RECONNECT_SEC so a stall that one reconnect fixes stays quiet.
 STALL_ALERT_SEC = int(_env("STALL_ALERT_SEC", "900"))
 
+# Append-only event history (JSON lines) that survives restarts. Empty = off.
+EVENT_LOG = _env("EVENT_LOG", os.path.join(HERE, "events.jsonl")).strip()
+
 # Farm internet check: ping FARM_WAN_HOST (the farm's public IP). Empty = off.
 # Only runs where Telegram is enabled, so run it on the VPS, not on the Pi
 # that sits behind the same power cuts.
@@ -227,6 +230,44 @@ def send_telegram(text):
     threading.Thread(target=_do, daemon=True).start()
 
 
+# --- Persistent event log ---
+_event_lock = threading.Lock()
+
+
+def log_event(kind, **fields):
+    """Append one event to EVENT_LOG so history survives restarts."""
+    if not EVENT_LOG:
+        return
+    rec = {"ts": time.time(), "time": time.strftime("%Y-%m-%d %H:%M:%S"), "kind": kind}
+    rec.update(fields)
+    try:
+        with _event_lock, open(EVENT_LOG, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except OSError as e:
+        print("Event log error:", e)
+
+
+def last_open_outage():
+    """Start time of a power outage that was logged but never closed, else None."""
+    if not EVENT_LOG:
+        return None
+    open_start = None
+    try:
+        with open(EVENT_LOG) as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("kind") == "power_outage":
+                    open_start = rec.get("start", rec["ts"])
+                elif rec.get("kind") == "power_restored":
+                    open_start = None
+    except OSError:
+        return None
+    return open_start
+
+
 def fmt_duration(sec):
     sec = int(sec); h = sec // 3600; m = (sec % 3600) // 60
     if h: return f"{h} h {m} min"
@@ -258,14 +299,23 @@ def check_power_alerts():
         return
     if _alert["stable"] is None:      # first stable reading = baseline, no alert
         _alert["stable"] = src
+        carried = last_open_outage()  # outage logged before this process (re)started
         if src == "battery":          # started in the middle of an outage
-            _alert["outage_start"] = _alert["cand_since"]
+            _alert["outage_start"] = carried or _alert["cand_since"]
+            if not carried:
+                log_event("power_outage", start=_alert["cand_since"], soc=soc,
+                          note="already on battery at startup")
+        elif carried:                 # outage ended while we were down
+            log_event("power_restored", start=carried, end=_alert["cand_since"],
+                      duration_sec=int(_alert["cand_since"] - carried), soc=soc,
+                      note="restored while monitor was down; duration is an upper bound")
         return
     if src == _alert["stable"]:
         return
     _alert["stable"] = src
     if src == "battery":
         _alert["outage_start"] = _alert["cand_since"]
+        log_event("power_outage", start=_alert["cand_since"], soc=soc)
         msg = (f"{DEVICE_NAME}: POWER OUTAGE\n"
                f"River switched to battery.\n"
                f"Battery: {soc}%")
@@ -275,6 +325,8 @@ def check_power_alerts():
         start = _alert["outage_start"]
         _alert["outage_start"] = None
         dur = fmt_duration(_alert["cand_since"] - start) if start else "unknown"
+        log_event("power_restored", start=start, end=_alert["cand_since"],
+                  duration_sec=int(_alert["cand_since"] - start) if start else None, soc=soc)
         msg = (f"{DEVICE_NAME}: MAINS POWER RESTORED\n"
                f"Time on battery: {dur}\n"
                f"Battery: {soc}%\n"
@@ -288,6 +340,7 @@ def notify_data_resumed():
     if not _stall["notified"]:
         return
     gap = fmt_duration(time.time() - _stall["since"]) if _stall["since"] else "unknown"
+    log_event("data_back", gap_sec=int(time.time() - _stall["since"]) if _stall["since"] else None)
     _stall["notified"] = False
     _stall["since"] = 0.0
     with lock:
@@ -360,6 +413,7 @@ def watchdog_loop():
                 soc = state["soc"]
             last_seen = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_data))
                          if updated else "never since start")
+            log_event("no_data", last_seen=last_data if updated else None)
             send_telegram(f"{DEVICE_NAME}: NO DATA FROM RIVER\n"
                           f"Silent for {fmt_duration(silent)} (last seen {last_seen}).\n"
                           f"Last known source: {src}, battery {soc}%.\n"
@@ -405,6 +459,8 @@ def wan_loop():
             if not _wan["up"] and _wan["oks"] >= WAN_UP_AFTER:
                 _wan["up"] = True
                 dur = fmt_duration(now - _wan["down_since"]) if _wan["down_since"] else "unknown"
+                log_event("internet_restored", start=_wan["down_since"], end=now,
+                          duration_sec=int(now - _wan["down_since"]) if _wan["down_since"] else None)
                 _wan["down_since"] = None
                 send_telegram(f"{DEVICE_NAME}: INTERNET RESTORED\n"
                               f"The farm answers ping again.\n"
@@ -422,6 +478,7 @@ def wan_loop():
             _wan["down_since"] = now
         if _wan["up"] and _wan["fails"] >= WAN_DOWN_AFTER:
             _wan["up"] = False
+            log_event("internet_down", start=_wan["down_since"])
             send_telegram(f"{DEVICE_NAME}: INTERNET DOWN\n"
                           f"The farm's public IP stopped answering ping "
                           f"({fmt_duration(now - _wan['down_since'])} ago).\n"
