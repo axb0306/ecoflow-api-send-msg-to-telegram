@@ -316,9 +316,9 @@ def check_power_alerts():
     if src == "battery":
         _alert["outage_start"] = _alert["cand_since"]
         log_event("power_outage", start=_alert["cand_since"], soc=soc)
-        msg = (f"{DEVICE_NAME}: POWER OUTAGE\n"
-               f"River switched to battery.\n"
-               f"Battery: {soc}%")
+        msg = (f"🔴⚡ {DEVICE_NAME}: POWER OUTAGE\n"
+               f"🔋 River switched to battery.\n"
+               f"🔋 Battery: {soc}%")
         send_telegram(msg)
         print("Telegram: power outage")
     else:  # back on mains
@@ -327,10 +327,10 @@ def check_power_alerts():
         dur = fmt_duration(_alert["cand_since"] - start) if start else "unknown"
         log_event("power_restored", start=start, end=_alert["cand_since"],
                   duration_sec=int(_alert["cand_since"] - start) if start else None, soc=soc)
-        msg = (f"{DEVICE_NAME}: MAINS POWER RESTORED\n"
-               f"Time on battery: {dur}\n"
-               f"Battery: {soc}%\n"
-               f"Battery temp: {temp} C")
+        msg = (f"🟢🔌 {DEVICE_NAME}: MAINS POWER RESTORED\n"
+               f"⏱ Time on battery: {dur}\n"
+               f"🔋 Battery: {soc}%\n"
+               f"🌡 Battery temp: {temp} C")
         send_telegram(msg)
         print("Telegram: mains restored")
 
@@ -346,9 +346,9 @@ def notify_data_resumed():
     with lock:
         src = state["source"]
         soc = state["soc"]
-    send_telegram(f"{DEVICE_NAME}: DATA BACK\n"
-                  f"River is reporting again after {gap}.\n"
-                  f"Source: {src}\nBattery: {soc}%")
+    send_telegram(f"🟢📡 {DEVICE_NAME}: DATA BACK\n"
+                  f"✅ River is reporting again after {gap}.\n"
+                  f"🔌 Source: {src}\n🔋 Battery: {soc}%")
     print("Telegram: data resumed")
 
 
@@ -414,10 +414,10 @@ def watchdog_loop():
             last_seen = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_data))
                          if updated else "never since start")
             log_event("no_data", last_seen=last_data if updated else None)
-            send_telegram(f"{DEVICE_NAME}: NO DATA FROM RIVER\n"
-                          f"Silent for {fmt_duration(silent)} (last seen {last_seen}).\n"
-                          f"Last known source: {src}, battery {soc}%.\n"
-                          f"Power state is UNKNOWN - check the farm.")
+            send_telegram(f"🟠📡 {DEVICE_NAME}: NO DATA FROM RIVER\n"
+                          f"⏱ Silent for {fmt_duration(silent)} (last seen {last_seen}).\n"
+                          f"🔋 Last known source: {src}, battery {soc}%.\n"
+                          f"⚠️ Power state is UNKNOWN - check the farm.")
             print("Telegram: no data alert")
 
 
@@ -441,8 +441,8 @@ def river_summary():
     with lock:
         src, soc, online = state["source"], state["soc"], state["online"]
     if not online:
-        return "River: no data (unknown power state)"
-    return f"River: {src}, battery {soc}%"
+        return "🟠 River: no data (unknown power state)"
+    return f"🔋 River: {src}, battery {soc}%"
 
 
 def wan_loop():
@@ -462,9 +462,9 @@ def wan_loop():
                 log_event("internet_restored", start=_wan["down_since"], end=now,
                           duration_sec=int(now - _wan["down_since"]) if _wan["down_since"] else None)
                 _wan["down_since"] = None
-                send_telegram(f"{DEVICE_NAME}: INTERNET RESTORED\n"
-                              f"The farm answers ping again.\n"
-                              f"Time without internet: {dur}\n"
+                send_telegram(f"🟢🌐 {DEVICE_NAME}: INTERNET RESTORED\n"
+                              f"✅ The farm answers ping again.\n"
+                              f"⏱ Time without internet: {dur}\n"
                               f"{river_summary()}")
                 print("Telegram: farm internet restored")
             continue
@@ -479,8 +479,8 @@ def wan_loop():
         if _wan["up"] and _wan["fails"] >= WAN_DOWN_AFTER:
             _wan["up"] = False
             log_event("internet_down", start=_wan["down_since"])
-            send_telegram(f"{DEVICE_NAME}: INTERNET DOWN\n"
-                          f"The farm's public IP stopped answering ping "
+            send_telegram(f"🔴🌐 {DEVICE_NAME}: INTERNET DOWN\n"
+                          f"❌ The farm's public IP stopped answering ping "
                           f"({fmt_duration(now - _wan['down_since'])} ago).\n"
                           f"{river_summary()}")
             print("Telegram: farm internet down")
@@ -586,7 +586,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     wan_on = bool(FARM_WAN_HOST) and TELEGRAM_ENABLED
-    send_telegram(f"{DEVICE_NAME}: monitoring started. "
+    send_telegram(f"🟦🛰 {DEVICE_NAME}: monitoring started. "
                   "You'll be alerted on power outage or loss of contact"
                   + (" and on internet outage." if wan_on else "."))
     threading.Thread(target=mqtt_loop, daemon=True).start()
